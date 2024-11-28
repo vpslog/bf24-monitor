@@ -11,9 +11,6 @@ import shutil
 
 scraper = cfscrape.create_scraper()  # returns a CloudflareScraper instance
 
-
-
-
 class ForumMonitor:
     def __init__(self, config_path='data/config.json'):
         self.config_path = config_path
@@ -23,7 +20,7 @@ class ForumMonitor:
 
         # 连接到 MongoDB
         self.mongo_client = MongoClient(self.mongo_host)  # 默认连接到本地 MongoDB
-        self.db = self.mongo_client['forum_monitor']  # 使用数据库 'forum_monitor'
+        self.db = self.mongo_client['bf24']  # 使用数据库 'forum_monitor'
         self.threads_collection = self.db['threads']  # 线程集合
         self.comments_collection = self.db['comments']  # 评论集合
         try:
@@ -40,6 +37,8 @@ class ForumMonitor:
             # 检查配置文件是否存在
             if not os.path.exists(self.config_path):
                 print(f"{self.config_path} 不存在，复制到 {self.config_path}")
+                try: os.mkdir('data')
+                except: pass
                 shutil.copy('example.json', self.config_path)
             with open(self.config_path, 'r') as f:
                 self.config = json.load(f)['config']
@@ -158,7 +157,7 @@ class ForumMonitor:
 
             time_diff = datetime.utcnow() - comment_data['created_at']
             # 如果文章发布时间在当前时间的一天内，则发送通知
-            if time_diff.total_seconds() <= 24 * 60 * 60 and comment_data['author'] == thread_data['creator']:  # 24小时以内
+            if time_diff.total_seconds() <= 24 * 60 * 60:  # 24小时以内
                 print(comment_data['message'])
                 ai_response = self.get_filter_from_ai(comment_data['message'])
                 print(ai_response)
@@ -181,7 +180,7 @@ class ForumMonitor:
                     print(f'AI skip {comment_data["message"]}')
 
     # 检查 RSS
-    def check_let(self, url = "https://lowendtalk.com/categories/offers/feed.rss"):
+    def check_let(self, url = "https://lowendtalk.com/categories/announcements/feed.rss"):
         print(f"正在检查 LET: {url}")
         response = scraper.get(url)
         if response.status_code == 200:
@@ -199,6 +198,8 @@ class ForumMonitor:
         for item in items[:3]:
             # print(item)
             title = item.find('title').text
+            if not 'black friday' in title.lower():
+                continue
             link = item.find('link').text
             description = BeautifulSoup(item.find('description').text,'lxml').text
             pub_date = item.find('pubDate').text
@@ -227,6 +228,17 @@ class ForumMonitor:
         # 获取所有评论
         comments = soup.find_all('li', class_='ItemComment')
         for comment in comments:
+            # 检查是否包含指定的 class
+            comment_classes = comment.get('class')
+            if not comment_classes or not (
+                'Role_PatronProvider' in comment_classes or 
+                'isOriginalPoster' in comment_classes or 
+                'Role_HostingProvider' in comment_classes
+            ):
+                continue  # 如果不包含目标类，则跳过
+            
+
+
             # 通过 ID 获取评论唯一标识
             comment_id = comment.get('id')
             if not comment_id:
@@ -239,9 +251,12 @@ class ForumMonitor:
             author = comment.find('a', class_='Username').text
             message = comment.find('div', class_='Message').text.strip()
             created_at = comment.find('time')['datetime']
-            
-            if not author == thread_data['creator'] or comment.find('div',class_="QuoteText"):
+            if len(message) <5:
+                print('too short')
                 continue
+            if message.startswith('@'):
+                print('start with @')
+                continue  # 如果消息以 '@' 开头，则跳过
 
             comment_data = {
                     'comment_id': f'{thread_data["cate"]}_{comment_id}',  # 使用 comment_id 作为唯一标识符
@@ -254,7 +269,7 @@ class ForumMonitor:
                     'created_at_recorded': datetime.utcnow(),
                     'url': f"https://lowendtalk.com/discussion/comment/{comment_id}/#Comment_{comment_id}" if thread_data['cate'] == 'let' else f"https://lowendspirit.com/discussion/comment/{comment_id}/#Comment_{comment_id}"
                 }
-            
+            # print(comment_data)
             self.handle_comment(comment_data, thread_data)
 
     def check_les(self,url = 'https://lowendspirit.com/categories/offers'):
@@ -309,13 +324,13 @@ class ForumMonitor:
             if debug:
                     print(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} 开始遍历...")
                     self.check_let()  # 检查 RSS
-                    self.check_les()
+                    # self.check_les()
                     print(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} 遍历完成...")
             else:
                 try:
                     print(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} 开始遍历...")
                     self.check_let()  # 检查 RSS
-                    self.check_les()
+                    # self.check_les()
                     print(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')} 遍历完成...")
                 except Exception as e:
                     print(f"检测过程出现错误: {e}")
